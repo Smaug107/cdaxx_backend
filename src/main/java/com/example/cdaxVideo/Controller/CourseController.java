@@ -164,94 +164,6 @@ private EntityManager entityManager;
         }
 
 
-@GetMapping("/courses/debug/tags-check")
-public ResponseEntity<Map<String, Object>> debugTagsCheck() {
-    Map<String, Object> response = new HashMap<>();
-    
-    try {
-        // 1. Check total courses
-        long totalCourses = courseRepository.count();
-        response.put("totalCourses", totalCourses);
-        
-        // 2. Direct database query for tags
-        List<Object[]> tagResults = entityManager.createNativeQuery(
-            "SELECT DISTINCT tag FROM course_tags ORDER BY tag"
-        ).getResultList();
-        
-        List<String> allTags = new ArrayList<>();
-        for (Object[] row : tagResults) {
-            if (row[0] != null) {
-                allTags.add(row[0].toString());
-            }
-        }
-        
-        response.put("allTagsInDatabase", allTags);
-        response.put("totalUniqueTags", allTags.size());
-        
-        // 3. Check specifically for python tag
-        boolean hasPythonTag = allTags.stream()
-            .anyMatch(tag -> tag != null && tag.toLowerCase().contains("python"));
-        response.put("hasPythonTag", hasPythonTag);
-        
-        // 4. Get courses with python tag
-        List<Object[]> pythonCourses = entityManager.createNativeQuery(
-            "SELECT c.id, c.title, ct.tag " +
-            "FROM courses c " +
-            "JOIN course_tags ct ON c.id = ct.course_id " +
-            "WHERE LOWER(ct.tag) LIKE '%python%' " +
-            "ORDER BY c.id"
-        ).getResultList();
-        
-        List<Map<String, Object>> pythonTagCourses = new ArrayList<>();
-        for (Object[] row : pythonCourses) {
-            Map<String, Object> courseInfo = new HashMap<>();
-            courseInfo.put("courseId", row[0]);
-            courseInfo.put("courseTitle", row[1]);
-            courseInfo.put("tag", row[2]);
-            pythonTagCourses.add(courseInfo);
-        }
-        
-        response.put("coursesWithPythonTag", pythonTagCourses);
-        response.put("pythonTagCoursesCount", pythonTagCourses.size());
-        
-        // 5. Get first 10 courses with their tags
-        List<Course> sampleCourses = courseRepository.findAll().stream()
-            .limit(10)
-            .collect(Collectors.toList());
-        
-        List<Map<String, Object>> coursesWithTags = new ArrayList<>();
-        for (Course course : sampleCourses) {
-            Map<String, Object> courseInfo = new HashMap<>();
-            courseInfo.put("id", course.getId());
-            courseInfo.put("title", course.getTitle());
-            courseInfo.put("hasTags", course.getTags() != null && !course.getTags().isEmpty());
-            courseInfo.put("tags", course.getTags() != null ? course.getTags() : "No tags");
-            coursesWithTags.add(courseInfo);
-        }
-        
-        response.put("sampleCourses", coursesWithTags);
-        response.put("status", "SUCCESS");
-        
-    } catch (Exception e) {
-        response.put("status", "ERROR");
-        response.put("error", e.getMessage());
-    }
-    
-    return ResponseEntity.ok(response);
-}
-
-
-
-
-
-
-
-
-
-
-
-
-
 @GetMapping("/courses/{id}")
 public ResponseEntity<Map<String, Object>> getCourse(
         @PathVariable Long id,
@@ -805,38 +717,7 @@ public ResponseEntity<?> getAssessmentsByModule(@PathVariable Long moduleId) {
 
         }
         //-----------------------------Submit Assessment and Check its Status-----------------------
-        @PostMapping("/debug/submit")
-    public ResponseEntity<?> debugSubmitAssessment(@RequestBody Map<String, Object> payload) {
-        System.out.println("🔴 DEBUG SUBMIT ENDPOINT HIT!");
-        System.out.println("Full payload: " + payload);
-        
-        // Extract parameters
-        Long userId = Long.valueOf(payload.get("userId").toString());
-        Long assessmentId = Long.valueOf(payload.get("assessmentId").toString());
-        
-        @SuppressWarnings("unchecked")
-        Map<String, String> answers = (Map<String, String>) payload.get("answers");
-        
-        System.out.println("userId: " + userId);
-        System.out.println("assessmentId: " + assessmentId);
-        System.out.println("answers: " + answers);
-        
-        // Call your service
-        Map<String, Object> result = courseService.submitAssessment(userId, assessmentId, 
-            answers.entrySet().stream()
-                .collect(Collectors.toMap(
-                    e -> Long.valueOf(e.getKey()), 
-                    e -> e.getValue()
-                )));
-        
-        return ResponseEntity.ok(result);
-    }
-        
 
-
-
-
-        
         
         @PostMapping("/course/assessment/submit")
         public ResponseEntity<?> submitAssessment(
