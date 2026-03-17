@@ -1,6 +1,5 @@
 package com.example.cdaxVideo.Config;
 
-
 import io.jsonwebtoken.*;
 import io.jsonwebtoken.security.Keys;
 import io.jsonwebtoken.security.SecurityException;
@@ -146,6 +145,104 @@ public class JwtTokenUtil {
     public String getRoleFromToken(String token) {
         Claims claims = extractAllClaims(token);
         return claims.get("role", String.class);
+    }
+    
+    // ==================== NEW METHODS FOR DEVICE TRACKING ====================
+    
+    /**
+     * Extract device type from token
+     */
+    public String getDeviceTypeFromToken(String token) {
+        try {
+            Claims claims = extractAllClaims(token);
+            return claims.get("deviceType", String.class);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+    
+    /**
+     * Extract device ID from token
+     */
+    public String getDeviceIdFromToken(String token) {
+        try {
+            Claims claims = extractAllClaims(token);
+            return claims.get("deviceId", String.class);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+    
+    /**
+     * Extract session ID from token
+     */
+    public String getSessionIdFromToken(String token) {
+        try {
+            Claims claims = extractAllClaims(token);
+            return claims.get("sessionId", String.class);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+    
+    /**
+     * Check if token has device information
+     */
+    public boolean hasDeviceInfo(String token) {
+        try {
+            Claims claims = extractAllClaims(token);
+            return claims.containsKey("deviceType") || claims.containsKey("deviceId");
+        } catch (Exception e) {
+            return false;
+        }
+    }
+    
+    /**
+     * Get all custom claims from token
+     */
+    public Map<String, Object> getAllCustomClaims(String token) {
+        try {
+            Claims claims = extractAllClaims(token);
+            Map<String, Object> customClaims = new HashMap<>();
+            
+            // Filter out standard claims
+            for (String key : claims.keySet()) {
+                if (!key.equals("sub") && !key.equals("iss") && !key.equals("iat") && 
+                    !key.equals("exp") && !key.equals("aud") && !key.equals("nbf")) {
+                    customClaims.put(key, claims.get(key));
+                }
+            }
+            return customClaims;
+        } catch (Exception e) {
+            return new HashMap<>();
+        }
+    }
+    
+    // ==================== TOKEN REFRESH WITH DEVICE INFO ====================
+    
+    /**
+     * Generate refresh token preserving device info
+     */
+    public String generateRefreshToken(String oldToken) {
+        try {
+            String username = getUsernameFromToken(oldToken);
+            String deviceType = getDeviceTypeFromToken(oldToken);
+            String deviceId = getDeviceIdFromToken(oldToken);
+            
+            Map<String, Object> claims = new HashMap<>();
+            if (deviceType != null) {
+                claims.put("deviceType", deviceType);
+            }
+            if (deviceId != null) {
+                claims.put("deviceId", deviceId);
+            }
+            claims.put("sessionId", java.util.UUID.randomUUID().toString());
+            
+            return generateToken(username, claims);
+        } catch (Exception e) {
+            // If can't extract device info, generate simple token
+            return generateToken(getUsernameFromToken(oldToken));
+        }
     }
     
     // Check if token can be refreshed

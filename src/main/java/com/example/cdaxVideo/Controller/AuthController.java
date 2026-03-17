@@ -1,9 +1,11 @@
 package com.example.cdaxVideo.Controller;
 
 import com.example.cdaxVideo.Entity.User;
+import com.example.cdaxVideo.Entity.UserSession;
 import com.example.cdaxVideo.Repository.UserRepository;
 import com.example.cdaxVideo.Service.AuthService;
 import com.example.cdaxVideo.Config.JwtTokenUtil;
+import com.example.cdaxVideo.DTO.LoginRequest;
 import com.example.cdaxVideo.DTO.UserDTO;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
@@ -14,7 +16,9 @@ import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
+import jakarta.validation.Valid;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 @RestController
@@ -30,7 +34,6 @@ public class AuthController {
     @Autowired
     private JwtTokenUtil jwtTokenUtil;
 
-    // ==================== EXISTING ENDPOINTS (KEPT AS IS) ====================
 
     // ---------------------- REGISTER (Original) ----------------------
     @PostMapping("/register")
@@ -71,7 +74,7 @@ public class AuthController {
 
                 resp.put("success", true);
                 resp.put("message", "Login successful");
-                resp.put("user", fullUser);   // ✅ IMPORTANT
+                resp.put("user", fullUser);
                 return ResponseEntity.ok(resp);
 
             case "Incorrect password":
@@ -91,7 +94,53 @@ public class AuthController {
         }
     }
 
-    // ==================== NEW JWT ENDPOINTS ====================
+    // ==================== NEW JWT ENDPOINTS WITH DEVICE TRACKING ====================
+
+    // ---------------------- LOGIN with JWT and Device Info ----------------------
+    @PostMapping("/jwt/login")
+    public ResponseEntity<Map<String, Object>> loginUserWithJWT(@Valid @RequestBody LoginRequest loginRequest) {
+        try {
+            String email = loginRequest.getEmail();
+            String password = loginRequest.getPassword();
+            String deviceType = loginRequest.getDeviceType();
+            String deviceId = loginRequest.getDeviceId();
+
+            if (email == null || password == null || email.isEmpty() || password.isEmpty()) {
+                Map<String, Object> resp = new HashMap<>();
+                resp.put("success", false);
+                resp.put("message", "Email and password are required");
+                return ResponseEntity.badRequest().body(resp);
+            }
+
+            // Validate device type
+            if (deviceType == null || deviceType.isEmpty()) {
+                deviceType = "WEB"; // Default to WEB
+            }
+            deviceType = deviceType.toUpperCase();
+            
+            if (!deviceType.equals("MOBILE") && !deviceType.equals("WEB")) {
+                Map<String, Object> resp = new HashMap<>();
+                resp.put("success", false);
+                resp.put("message", "Invalid device type. Must be MOBILE or WEB");
+                return ResponseEntity.badRequest().body(resp);
+            }
+
+            Map<String, Object> result = authService.loginUserWithJWT(email, password, deviceType, deviceId);
+            result.put("success", true);
+            return ResponseEntity.ok(result);
+
+        } catch (RuntimeException e) {
+            Map<String, Object> resp = new HashMap<>();
+            resp.put("success", false);
+            resp.put("message", e.getMessage());
+            return ResponseEntity.status(401).body(resp);
+        } catch (Exception e) {
+            Map<String, Object> resp = new HashMap<>();
+            resp.put("success", false);
+            resp.put("message", "Login failed: " + e.getMessage());
+            return ResponseEntity.status(500).body(resp);
+        }
+    }
 
     // ---------------------- REGISTER with JWT ----------------------
     @PostMapping("/jwt/register")
@@ -113,189 +162,25 @@ public class AuthController {
         }
     }
 
-    // ---------------------- LOGIN with JWT ----------------------
-@PostMapping("/jwt/login")
-public ResponseEntity<Map<String, Object>> loginUserWithJWT(@RequestBody Map<String, String> credentials) {
-    try {
-        String email = credentials.get("email");
-        String password = credentials.get("password");
-
-        if (email == null || password == null || email.isEmpty() || password.isEmpty()) {
-            Map<String, Object> resp = new HashMap<>();
-            resp.put("success", false);
-            resp.put("message", "Email and password are required");
-            return ResponseEntity.badRequest().body(resp);
+    // ---------------------- LOGOUT with Session Cleanup ----------------------
+    @PostMapping("/logout")
+    public ResponseEntity<Map<String, Object>> logout(@RequestHeader(value = "Authorization", required = false) String token) {
+        Map<String, Object> response = new HashMap<>();
+        
+        if (token != null && token.startsWith("Bearer ")) {
+            String jwtToken = token.substring(7);
+            authService.logout(jwtToken);
+            response.put("success", true);
+            response.put("message", "Logout successful");
+            return ResponseEntity.ok(response);
         }
-
-        Map<String, Object> result = authService.loginUserWithJWT(email, password);
-        result.put("success", true);
-        return ResponseEntity.ok(result);
-
-    } catch (RuntimeException e) {
-        Map<String, Object> resp = new HashMap<>();
-        resp.put("success", false);
-        resp.put("message", e.getMessage());
-        return ResponseEntity.status(401).body(resp);
+        
+        response.put("success", false);
+        response.put("message", "No token provided");
+        return ResponseEntity.badRequest().body(response);
     }
-}
 
-
-    // ---------------------- GET CURRENT USER (Protected) ----------------------
-@GetMapping("/jwt/me")
-@PreAuthorize("isAuthenticated()")
-public ResponseEntity<Map<String, Object>> getCurrentUser() {
-    try {
-        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
-        String email = authentication.getName();
-        
-        System.out.println("🔍 [DEBUG] /jwt/me called for email: " + email);
-        
-        // Get user WITHOUT any lazy loading
-        User user = userRepository.findByEmail(email)
-            .orElseThrow(() -> new RuntimeException("User not found"));
-        
-        // Build response with ONLY basic fields - NO LAZY COLLECTIONS
-        Map<String, Object> userResponse = new HashMap<>();
-        userResponse.put("id", user.getId());
-        userResponse.put("firstName", user.getFirstName());
-        userResponse.put("lastName", user.getLastName());
-        userResponse.put("email", user.getEmail());
-        userResponse.put("phoneNumber", user.getPhoneNumber());
-        userResponse.put("role", user.getRole());
-        userResponse.put("isNewUser", user.getIsNewUser() != null && user.getIsNewUser() == 1);
-        userResponse.put("isActive", user.getIsActive());
-        userResponse.put("isEmailVerified", user.getIsEmailVerified());
-        
-        // Add optional fields if they exist
-        if (user.getAddress() != null) {
-            userResponse.put("address", user.getAddress());
-        }
-        if (user.getDateOfBirth() != null) {
-            userResponse.put("dateOfBirth", user.getDateOfBirth().toString());
-        }
-        if (user.getProfileImage() != null) {
-            userResponse.put("profileImage", user.getProfileImage());
-        }
-        
-        // Set defaults (these will be calculated later when we fix the repository)
-        userResponse.put("subscribed", false);
-        userResponse.put("enrolledCoursesCount", 0);
-        
-        Map<String, Object> resp = new HashMap<>();
-        resp.put("success", true);
-        resp.put("user", userResponse);
-        
-        System.out.println("✅ [DEBUG] Returning user response for: " + email);
-        System.out.println("📊 Response keys: " + userResponse.keySet());
-        return ResponseEntity.ok(resp);
-    } catch (RuntimeException e) {
-        System.out.println("❌ [DEBUG] Error in /jwt/me: " + e.getMessage());
-        Map<String, Object> resp = new HashMap<>();
-        resp.put("success", false);
-        resp.put("message", e.getMessage());
-        return ResponseEntity.status(401).body(resp);
-    }
-}
-
-
-
-    // ==================== PROFILE UPDATE ENDPOINTS ====================
-
-@PutMapping("/profile/update")
-@PreAuthorize("isAuthenticated()")
-public ResponseEntity<Map<String, Object>> updateProfile(@RequestBody Map<String, Object> updates) {
-    try {
-        UserDTO updatedUser = authService.updateProfile(updates);
-        Map<String, Object> resp = new HashMap<>();
-        resp.put("success", true);
-        resp.put("message", "Profile updated successfully");
-        resp.put("user", updatedUser);
-        return ResponseEntity.ok(resp);
-    } catch (RuntimeException e) {
-        Map<String, Object> resp = new HashMap<>();
-        resp.put("success", false);
-        resp.put("message", e.getMessage());
-        return ResponseEntity.badRequest().body(resp);
-    }
-}
-
-@GetMapping("/profile/me")
-@PreAuthorize("isAuthenticated()")
-public ResponseEntity<Map<String, Object>> getMyProfile() {
-    try {
-        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
-        String email = authentication.getName();
-        
-        System.out.println("🔍 [DEBUG] /profile/me called for email: " + email);
-        
-        // Get user WITHOUT any lazy loading
-        User user = userRepository.findByEmail(email)
-            .orElseThrow(() -> new RuntimeException("User not found"));
-        
-        // Build response with ONLY basic fields
-        Map<String, Object> userResponse = new HashMap<>();
-        userResponse.put("id", user.getId());
-        userResponse.put("firstName", user.getFirstName());
-        userResponse.put("lastName", user.getLastName());
-        userResponse.put("email", user.getEmail());
-        userResponse.put("phoneNumber", user.getPhoneNumber());
-        userResponse.put("role", user.getRole());
-        userResponse.put("isNewUser", user.getIsNewUser() != null && user.getIsNewUser() == 1);
-        userResponse.put("isActive", user.getIsActive());
-        userResponse.put("isEmailVerified", user.getIsEmailVerified());
-        
-        // Add optional fields
-        if (user.getAddress() != null) {
-            userResponse.put("address", user.getAddress());
-        }
-        if (user.getDateOfBirth() != null) {
-            userResponse.put("dateOfBirth", user.getDateOfBirth().toString());
-        }
-        if (user.getProfileImage() != null) {
-            userResponse.put("profileImage", user.getProfileImage());
-        }
-        
-        // Set defaults
-        userResponse.put("subscribed", false);
-        userResponse.put("enrolledCoursesCount", 0);
-        
-        Map<String, Object> resp = new HashMap<>();
-        resp.put("success", true);
-        resp.put("user", userResponse);
-        
-        System.out.println("✅ [DEBUG] /profile/me response for: " + email);
-        return ResponseEntity.ok(resp);
-    } catch (RuntimeException e) {
-        System.out.println("❌ [DEBUG] Error in /profile/me: " + e.getMessage());
-        Map<String, Object> resp = new HashMap<>();
-        resp.put("success", false);
-        resp.put("message", e.getMessage());
-        return ResponseEntity.status(401).body(resp);
-    }
-}
-
-// private Map<String, Object> convertToProfileDTO(UserDTO userDTO) {
-//     Map<String, Object> profile = new HashMap<>();
-//     profile.put("id", userDTO.getId());
-//     profile.put("firstName", userDTO.getFirstName());
-//     profile.put("lastName", userDTO.getLastName());
-//     profile.put("email", userDTO.getEmail());
-//     profile.put("role", userDTO.getRole());
-//     profile.put("isNewUser", userDTO.getIsNewUser());
-    
-//     // Get full user details from database for additional fields
-//     User user = authService.getUserById(userDTO.getId());
-//     if (user != null) {
-//         profile.put("phoneNumber", user.getPhoneNumber());
-//         profile.put("address", user.getAddress());
-//         profile.put("dateOfBirth", user.getDateOfBirth());
-//         profile.put("profileImage", user.getProfileImage());
-//     }
-    
-//     return profile;
-// }
-
-    // ---------------------- VALIDATE TOKEN ----------------------
+    // ---------------------- VALIDATE TOKEN with Session Check ----------------------
     @PostMapping("/jwt/validate")
     public ResponseEntity<Map<String, Object>> validateToken(@RequestBody Map<String, String> tokenRequest) {
         try {
@@ -304,10 +189,17 @@ public ResponseEntity<Map<String, Object>> getMyProfile() {
                 throw new RuntimeException("Token is required");
             }
             
-            boolean isValid = authService.validateToken(token);
+            boolean isValid = authService.validateSession(token);
             Map<String, Object> resp = new HashMap<>();
             resp.put("success", true);
             resp.put("valid", isValid);
+            
+            if (isValid) {
+                // Add device info to response
+                String deviceType = jwtTokenUtil.getDeviceTypeFromToken(token);
+                resp.put("deviceType", deviceType);
+            }
+            
             return ResponseEntity.ok(resp);
         } catch (Exception e) {
             Map<String, Object> resp = new HashMap<>();
@@ -318,74 +210,228 @@ public ResponseEntity<Map<String, Object>> getMyProfile() {
         }
     }
 
+    // ---------------------- GET ACTIVE SESSIONS ----------------------
+    @GetMapping("/sessions")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<Map<String, Object>> getActiveSessions(@RequestHeader("Authorization") String token) {
+        try {
+            if (token != null && token.startsWith("Bearer ")) {
+                String jwtToken = token.substring(7);
+                Long userId = jwtTokenUtil.getUserIdFromToken(jwtToken);
+                
+                List<UserSession> sessions = authService.getUserActiveSessions(userId);
+                
+                Map<String, Object> response = new HashMap<>();
+                response.put("success", true);
+                response.put("sessions", sessions);
+                response.put("count", sessions.size());
+                return ResponseEntity.ok(response);
+            }
+            
+            Map<String, Object> response = new HashMap<>();
+            response.put("success", false);
+            response.put("message", "No token provided");
+            return ResponseEntity.badRequest().body(response);
+        } catch (Exception e) {
+            Map<String, Object> response = new HashMap<>();
+            response.put("success", false);
+            response.put("message", e.getMessage());
+            return ResponseEntity.internalServerError().body(response);
+        }
+    }
+
+    // ---------------------- FORCE LOGOUT OTHER PLATFORMS ----------------------
+    @PostMapping("/force-logout-other")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<Map<String, Object>> forceLogoutOtherPlatforms(@RequestHeader("Authorization") String token) {
+        try {
+            if (token != null && token.startsWith("Bearer ")) {
+                String jwtToken = token.substring(7);
+                String deviceType = jwtTokenUtil.getDeviceTypeFromToken(jwtToken);
+                Long userId = jwtTokenUtil.getUserIdFromToken(jwtToken);
+                
+                authService.forceLogoutOtherPlatforms(userId, deviceType);
+                
+                Map<String, Object> response = new HashMap<>();
+                response.put("success", true);
+                response.put("message", "Other platforms logged out successfully");
+                return ResponseEntity.ok(response);
+            }
+            
+            Map<String, Object> response = new HashMap<>();
+            response.put("success", false);
+            response.put("message", "No token provided");
+            return ResponseEntity.badRequest().body(response);
+        } catch (Exception e) {
+            Map<String, Object> response = new HashMap<>();
+            response.put("success", false);
+            response.put("message", e.getMessage());
+            return ResponseEntity.internalServerError().body(response);
+        }
+    }
+
     // ---------------------- REFRESH TOKEN ----------------------
-@PostMapping("/jwt/refresh")
-public ResponseEntity<Map<String, Object>> refreshToken(@RequestBody Map<String, String> body) {
-    String refreshToken = body.get("refreshToken");
+    @PostMapping("/jwt/refresh")
+    public ResponseEntity<Map<String, Object>> refreshToken(@RequestBody Map<String, String> body) {
+        try {
+            String refreshToken = body.get("refreshToken");
+            
+            if (refreshToken == null || refreshToken.isEmpty()) {
+                throw new RuntimeException("Refresh token is required");
+            }
 
-    User user = userRepository.findByRefreshToken(refreshToken)
-            .orElseThrow(() -> new RuntimeException("Invalid refresh token"));
+            User user = userRepository.findByRefreshToken(refreshToken)
+                    .orElseThrow(() -> new RuntimeException("Invalid refresh token"));
 
-    // Generate new access token
-    String newAccessToken = jwtTokenUtil.generateToken(user.getEmail(), Map.of(
-            "role", user.getRole(),
-            "userId", user.getId()
-    ));
+            // Get device info from old token if available
+            String oldToken = body.get("oldToken");
+            String deviceType = "WEB";
+            String deviceId = null;
+            
+            if (oldToken != null && !oldToken.isEmpty()) {
+                deviceType = jwtTokenUtil.getDeviceTypeFromToken(oldToken);
+                deviceId = jwtTokenUtil.getDeviceIdFromToken(oldToken);
+            }
 
-    Map<String, Object> resp = new HashMap<>();
-    resp.put("success", true);
-    resp.put("accessToken", newAccessToken);
-    return ResponseEntity.ok(resp);
-}
+            // Generate new access token with device info
+            Map<String, Object> claims = new HashMap<>();
+            claims.put("role", user.getRole());
+            claims.put("userId", user.getId());
+            claims.put("deviceType", deviceType != null ? deviceType : "WEB");
+            claims.put("deviceId", deviceId);
+            
+            String newAccessToken = jwtTokenUtil.generateToken(user.getEmail(), claims);
 
-
-    // ==================== EXISTING ENDPOINTS (CONTINUED) ====================
-
-    @GetMapping("/test")
-    public ResponseEntity<String> testServer() {
-        return ResponseEntity.ok("Server is running!");
-    }
-
-    // -------- Get First Name ----------
-    @GetMapping("/firstName")
-    public Map<String, Object> getFirstName(@RequestParam String email) {
-        String firstName = authService.getFirstNameByEmail(email);
-        Map<String, Object> resp = new HashMap<>();
-
-        if (firstName != null) {
-            resp.put("status", "success");
-            resp.put("firstName", firstName);
-        } else {
-            resp.put("status", "error");
-            resp.put("message", "User not found");
-        }
-        return resp;
-    }
-
-    // -------- Get User by Email ----------
-    @GetMapping("/getUserByEmail")
-    public ResponseEntity<Map<String, Object>> getUserByEmail(@RequestParam String email) {
-        User user = authService.getUserByEmail(email);
-        Map<String, Object> response = new HashMap<>();
-
-        if (user != null) {
-            response.put("status", "success");
-            response.put("email", user.getEmail());
-            response.put("firstName", user.getFirstName());
-            response.put("lastName", user.getLastName());
-            response.put("mobile", user.getPhoneNumber());
-            return ResponseEntity.ok(response);
-        } else {
-            response.put("status", "error");
-            response.put("message", "User not found");
-            return ResponseEntity.status(404).body(response);
+            Map<String, Object> resp = new HashMap<>();
+            resp.put("success", true);
+            resp.put("accessToken", newAccessToken);
+            resp.put("deviceType", deviceType);
+            return ResponseEntity.ok(resp);
+            
+        } catch (Exception e) {
+            Map<String, Object> resp = new HashMap<>();
+            resp.put("success", false);
+            resp.put("message", e.getMessage());
+            return ResponseEntity.badRequest().body(resp);
         }
     }
 
-    @PostMapping("/debug/hash")
-public String generateHash(@RequestParam String password) {
-    return new BCryptPasswordEncoder().encode(password);
-}
+    // ---------------------- GET CURRENT USER (Protected) ----------------------
+    @GetMapping("/jwt/me")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<Map<String, Object>> getCurrentUser() {
+        try {
+            Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+            String email = authentication.getName();
+            
+            System.out.println("🔍 [DEBUG] /jwt/me called for email: " + email);
+            
+            User user = userRepository.findByEmail(email)
+                .orElseThrow(() -> new RuntimeException("User not found"));
+            
+            Map<String, Object> userResponse = new HashMap<>();
+            userResponse.put("id", user.getId());
+            userResponse.put("firstName", user.getFirstName());
+            userResponse.put("lastName", user.getLastName());
+            userResponse.put("email", user.getEmail());
+            userResponse.put("phoneNumber", user.getPhoneNumber());
+            userResponse.put("role", user.getRole());
+            userResponse.put("isNewUser", user.getIsNewUser() != null && user.getIsNewUser() == 1);
+            userResponse.put("isActive", user.getIsActive());
+            userResponse.put("isEmailVerified", user.getIsEmailVerified());
+            
+            if (user.getAddress() != null) {
+                userResponse.put("address", user.getAddress());
+            }
+            if (user.getDateOfBirth() != null) {
+                userResponse.put("dateOfBirth", user.getDateOfBirth().toString());
+            }
+            if (user.getProfileImage() != null) {
+                userResponse.put("profileImage", user.getProfileImage());
+            }
+            
+            userResponse.put("subscribed", false);
+            userResponse.put("enrolledCoursesCount", 0);
+            
+            Map<String, Object> resp = new HashMap<>();
+            resp.put("success", true);
+            resp.put("user", userResponse);
+            
+            return ResponseEntity.ok(resp);
+        } catch (RuntimeException e) {
+            Map<String, Object> resp = new HashMap<>();
+            resp.put("success", false);
+            resp.put("message", e.getMessage());
+            return ResponseEntity.status(401).body(resp);
+        }
+    }
+
+    // ==================== PROFILE UPDATE ENDPOINTS ====================
+
+    @PutMapping("/profile/update")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<Map<String, Object>> updateProfile(@RequestBody Map<String, Object> updates) {
+        try {
+            UserDTO updatedUser = authService.updateProfile(updates);
+            Map<String, Object> resp = new HashMap<>();
+            resp.put("success", true);
+            resp.put("message", "Profile updated successfully");
+            resp.put("user", updatedUser);
+            return ResponseEntity.ok(resp);
+        } catch (RuntimeException e) {
+            Map<String, Object> resp = new HashMap<>();
+            resp.put("success", false);
+            resp.put("message", e.getMessage());
+            return ResponseEntity.badRequest().body(resp);
+        }
+    }
+
+    @GetMapping("/profile/me")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<Map<String, Object>> getMyProfile() {
+        try {
+            Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+            String email = authentication.getName();
+            
+            User user = userRepository.findByEmail(email)
+                .orElseThrow(() -> new RuntimeException("User not found"));
+            
+            Map<String, Object> userResponse = new HashMap<>();
+            userResponse.put("id", user.getId());
+            userResponse.put("firstName", user.getFirstName());
+            userResponse.put("lastName", user.getLastName());
+            userResponse.put("email", user.getEmail());
+            userResponse.put("phoneNumber", user.getPhoneNumber());
+            userResponse.put("role", user.getRole());
+            userResponse.put("isNewUser", user.getIsNewUser() != null && user.getIsNewUser() == 1);
+            userResponse.put("isActive", user.getIsActive());
+            userResponse.put("isEmailVerified", user.getIsEmailVerified());
+            
+            if (user.getAddress() != null) {
+                userResponse.put("address", user.getAddress());
+            }
+            if (user.getDateOfBirth() != null) {
+                userResponse.put("dateOfBirth", user.getDateOfBirth().toString());
+            }
+            if (user.getProfileImage() != null) {
+                userResponse.put("profileImage", user.getProfileImage());
+            }
+            
+            userResponse.put("subscribed", false);
+            userResponse.put("enrolledCoursesCount", 0);
+            
+            Map<String, Object> resp = new HashMap<>();
+            resp.put("success", true);
+            resp.put("user", userResponse);
+            
+            return ResponseEntity.ok(resp);
+        } catch (RuntimeException e) {
+            Map<String, Object> resp = new HashMap<>();
+            resp.put("success", false);
+            resp.put("message", e.getMessage());
+            return ResponseEntity.status(401).body(resp);
+        }
+    }
 
     @PostMapping("/profile/upload-image")
     public ResponseEntity<Map<String, Object>> uploadProfileImage(
@@ -395,7 +441,6 @@ public String generateHash(@RequestParam String password) {
         System.out.println("📤 Profile image upload via AuthController");
         
         try {
-            // Manual JWT validation
             if (authHeader == null || !authHeader.startsWith("Bearer ")) {
                 return ResponseEntity.status(401).body(Map.of(
                     "success", false,
@@ -404,6 +449,15 @@ public String generateHash(@RequestParam String password) {
             }
             
             String token = authHeader.substring(7);
+            
+            // Validate session first
+            if (!authService.validateSession(token)) {
+                return ResponseEntity.status(401).body(Map.of(
+                    "success", false,
+                    "message", "Session expired or logged in from another device"
+                ));
+            }
+            
             String email = jwtTokenUtil.getUsernameFromToken(token);
             
             if (email == null || !jwtTokenUtil.validateToken(token)) {
@@ -432,4 +486,49 @@ public String generateHash(@RequestParam String password) {
         }
     }
 
+    // ==================== EXISTING UTILITY ENDPOINTS ====================
+
+    @GetMapping("/test")
+    public ResponseEntity<String> testServer() {
+        return ResponseEntity.ok("Server is running!");
+    }
+
+    @GetMapping("/firstName")
+    public Map<String, Object> getFirstName(@RequestParam String email) {
+        String firstName = authService.getFirstNameByEmail(email);
+        Map<String, Object> resp = new HashMap<>();
+
+        if (firstName != null) {
+            resp.put("status", "success");
+            resp.put("firstName", firstName);
+        } else {
+            resp.put("status", "error");
+            resp.put("message", "User not found");
+        }
+        return resp;
+    }
+
+    @GetMapping("/getUserByEmail")
+    public ResponseEntity<Map<String, Object>> getUserByEmail(@RequestParam String email) {
+        User user = authService.getUserByEmail(email);
+        Map<String, Object> response = new HashMap<>();
+
+        if (user != null) {
+            response.put("status", "success");
+            response.put("email", user.getEmail());
+            response.put("firstName", user.getFirstName());
+            response.put("lastName", user.getLastName());
+            response.put("mobile", user.getPhoneNumber());
+            return ResponseEntity.ok(response);
+        } else {
+            response.put("status", "error");
+            response.put("message", "User not found");
+            return ResponseEntity.status(404).body(response);
+        }
+    }
+
+    @PostMapping("/debug/hash")
+    public String generateHash(@RequestParam String password) {
+        return new BCryptPasswordEncoder().encode(password);
+    }
 }
